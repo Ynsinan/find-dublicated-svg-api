@@ -61,6 +61,11 @@ def find_duplicates(folder_path):
         img1_path = os.path.join(folder_path, img1_name)
         img2_path = os.path.join(folder_path, img2_name)
 
+        # SVG dosyalarını kontrol et
+        if not os.path.getsize(img1_path) or not os.path.getsize(img2_path):
+            print(Fore.YELLOW + f"Empty SVG file: {img1_name} or {img2_name}" + Style.RESET_ALL)
+            return None
+
         with tempfile.NamedTemporaryFile(suffix=".png") as temp1, tempfile.NamedTemporaryFile(suffix=".png") as temp2:
             if not svg_to_png(img1_path, temp1.name) or not svg_to_png(img2_path, temp2.name):
                 return None
@@ -71,10 +76,20 @@ def find_duplicates(folder_path):
         return None
 
     with ThreadPoolExecutor(max_workers=4) as executor:
-        results = list(executor.map(lambda pair: process_pair(*pair), itertools.combinations(image_files, 2)))
+        # İşlem yürütme
+        futures = [executor.submit(lambda pair: process_pair(*pair), (img1, img2)) for img1, img2 in itertools.combinations(image_files, 2)]
+        # İşlem tamamlandığında sonuçları al
+        results = [future.result() for future in futures]
     
     duplicate_pairs = [result for result in results if result is not None]
-    return duplicate_pairs
+
+    if duplicate_pairs:
+        message = "Duplicate images found."
+    else:
+        message = "No duplicate images found."
+
+    return duplicate_pairs, message
+
 
 def get_image_source(image_path):
     with open(image_path, "rb") as image_file:
@@ -84,7 +99,7 @@ def get_image_source(image_path):
 @app.route('/upload', methods=['POST'])
 def upload_files():
     if 'file' not in request.files:
-        return jsonify({"error": "No file part"}), 400
+        return jsonify({"isSuccess": False, "error": "No file part"}), 400
     
     files = request.files.getlist('file')
     temp_folder = os.path.join(UPLOAD_FOLDER, str(uuid.uuid4()))  # Benzersiz geçici klasör oluştur
@@ -93,12 +108,12 @@ def upload_files():
 
     for file in files:
         if file.filename == '':
-            return jsonify({"error": "No selected file"}), 400
+            return jsonify({"isSuccess": False, "error": "No selected file"}), 400
         
         if file and file.filename.endswith('.svg'):
             file.save(os.path.join(temp_folder, file.filename))
 
-    duplicate_pairs = find_duplicates(temp_folder)
+    duplicate_pairs, message = find_duplicates(temp_folder)
     
     data = []
     for pair in duplicate_pairs:
@@ -112,7 +127,11 @@ def upload_files():
     # Geçici klasörü temizle
     shutil.rmtree(temp_folder)
 
-    return jsonify({"data": data})
+    return jsonify({"isSuccess": True, "message": message, "data": data}), 200
+
+@app.errorhandler(Exception)
+def handle_error(error):
+    return jsonify({"isSuccess": False, "error": str(error)}), 500
 
 if __name__ == "__main__":
     app.run(debug=True)
