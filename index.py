@@ -1,40 +1,46 @@
-import cairosvg
+from flask import Flask, request, jsonify
 import os
-import cv2
-from skimage.metrics import structural_similarity as ssim
+import shutil
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 import itertools
-import tempfile
-from tabulate import tabulate
+import base64
+import cairosvg
+import cv2
+from skimage.metrics import structural_similarity as ssim
 from colorama import init, Fore, Style
+import uuid
+import io
+import numpy as np
 
 # Initialize colorama
 init()
 
-def svg_to_png(svg_path, png_path):
+app = Flask(__name__)
+UPLOAD_FOLDER = 'uploaded_svgs'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+def svg_to_png(svg_content):
     try:
-        if os.path.basename(svg_path) == '.DS_Store':
-            return False
-        if os.path.getsize(svg_path) > 0:  # Check if the file is not empty
-            cairosvg.svg2png(url=svg_path, write_to=png_path)
-            return True
-        else:
-            print(Fore.RED + f"SVG file is empty: {svg_path}" + Style.RESET_ALL)
-            return False
+        png_output = io.BytesIO()
+        cairosvg.svg2png(bytestring=svg_content, write_to=png_output)
+        png_output.seek(0)
+        return png_output
     except Exception as e:
-        print(Fore.RED + f"Error processing SVG file: {svg_path}, Error: {e}" + Style.RESET_ALL)
-        return False
+        print(Fore.RED + f"Error processing SVG content: {e}" + Style.RESET_ALL)
+        return None
 
 def compare_images(image_pair):
-    image1_path, image2_path = image_pair
-    image1 = cv2.imread(image1_path)
-    image2 = cv2.imread(image2_path)
+    image1_bytes, image2_bytes = image_pair
+
+    image1 = cv2.imdecode(np.frombuffer(image1_bytes.read(), np.uint8), cv2.IMREAD_UNCHANGED)
+    image2 = cv2.imdecode(np.frombuffer(image2_bytes.read(), np.uint8), cv2.IMREAD_UNCHANGED)
 
     if image1 is None:
-        print(Fore.RED + f"Could not read image: {image1_path}" + Style.RESET_ALL)
+        print(Fore.RED + f"Could not read image from bytes" + Style.RESET_ALL)
         return None
     if image2 is None:
-        print(Fore.RED + f"Could not read image: {image2_path}" + Style.RESET_ALL)
+        print(Fore.RED + f"Could not read image from bytes" + Style.RESET_ALL)
         return None
 
     image1 = cv2.resize(image1, (300, 300))
@@ -46,47 +52,92 @@ def compare_images(image_pair):
     score, _ = ssim(gray1, gray2, full=True)
     return score
 
-def find_duplicates(folder_path):
-    duplicate_pairs = []
-    image_files = [f for f in os.listdir(folder_path) if f.endswith('.svg')]
-    
-    def process_pair(img1_name, img2_name):
-        img1_path = os.path.join(folder_path, img1_name)
-        img2_path = os.path.join(folder_path, img2_name)
+def process_pair(pair, svg_contents):
+    img1_name, img2_name = pair
+    svg_content1 = svg_contents[img1_name]
+    svg_content2 = svg_contents[img2_name]
 
-        with tempfile.NamedTemporaryFile(suffix=".png") as temp1, tempfile.NamedTemporaryFile(suffix=".png") as temp2:
-            if not svg_to_png(img1_path, temp1.name) or not svg_to_png(img2_path, temp2.name):
-                return None
+    png1 = svg_to_png(svg_content1)
+    png2 = svg_to_png(svg_content2)
 
-            similarity_score = compare_images((temp1.name, temp2.name))
-            if similarity_score is not None and similarity_score == 1:
-                return (img1_path, img2_path)
+    if png1 is None or png2 is None:
         return None
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        results = list(executor.map(lambda pair: process_pair(*pair), itertools.combinations(image_files, 2)))
-    
-    duplicate_pairs = [result for result in results if result is not None]
-    return duplicate_pairs
+    similarity_score = compare_images((png1, png2))
+    if similarity_score is not None and similarity_score == 1:
+        return (img1_name, img2_name)
+    return None
 
-def print_duplicates(duplicate_pairs):
+def find_duplicates(svg_files, svg_contents):
+    duplicate_pairs = []
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(process_pair, pair, svg_contents) for pair in itertools.combinations(svg_files, 2)]
+        results = [future.result() for future in futures]
+
+    duplicate_pairs = [result for result in results if result is not None]
+
     if duplicate_pairs:
-        table = [[os.path.basename(pair[0]), os.path.basename(pair[1])] for pair in duplicate_pairs]
-        print(Fore.GREEN + "Duplicate image pairs found:" + Style.RESET_ALL)
-        print(tabulate(table, headers=["Image 1", "Image 2"], tablefmt="grid"))
+        message = "Duplicate images found."
     else:
-        print(Fore.YELLOW + "No duplicate image pairs found." + Style.RESET_ALL)
+        message = "No duplicate images found."
+
+    return duplicate_pairs, message
+
+def get_image_source(svg_content):
+    encoded_string = base64.b64encode(svg_content).decode('utf-8')
+    return f"data:image/svg+xml;base64,{encoded_string}"
+
+@app.route('/upload', methods=['POST'])
+def upload_files():
+    if 'file' not in request.files:
+        return jsonify({"isSuccess": False, "error": "No file part"}), 400
+
+    files = request.files.getlist('file')
+    temp_folder = os.path.join(UPLOAD_FOLDER, str(uuid.uuid4()))  # Benzersiz geçici klasör oluştur
+
+    os.makedirs(temp_folder)  # Geçici klasörü oluştur
+
+    svg_files = []
+    svg_contents = {}
+
+    for file in files:
+        if file.filename == '':
+            return jsonify({"isSuccess": False, "error": "No selected file"}), 400
+
+        if file and file.filename.endswith('.svg'):
+            file_content = file.read()
+            if len(file_content.strip()) == 0:
+                print(Fore.YELLOW + f"Empty SVG file: {file.filename}" + Style.RESET_ALL)
+                continue
+            svg_files.append(file.filename)
+            svg_contents[file.filename] = file_content
+
+    if not svg_files:
+        return jsonify({"isSuccess": False, "error": "No valid SVG files uploaded"}), 400
+
+    try:
+        duplicate_pairs, message = find_duplicates(svg_files, svg_contents)
+    except Exception as e:
+        return jsonify({"isSuccess": False, "error": str(e)}), 500
+
+    data = []
+    for pair in duplicate_pairs:
+        data.append({
+            "fileName": pair[0],
+            "source": get_image_source(svg_contents[pair[0]]),
+            "fileName2": pair[1],
+            "source2": get_image_source(svg_contents[pair[1]])
+        })
+
+    # Geçici klasörü temizle
+    shutil.rmtree(temp_folder)
+
+    return jsonify({"isSuccess": True, "message": message, "data": data}), 200
+
+@app.errorhandler(Exception)
+def handle_error(error):
+    return jsonify({"isSuccess": False, "error": str(error)}), 500
 
 if __name__ == "__main__":
-    folder_path = os.path.join(os.getcwd(), 'icons')
-    duplicate_pairs = find_duplicates(folder_path)
-    print_duplicates(duplicate_pairs)
-    
-    if duplicate_pairs:
-        with open('duplicate_log.txt', 'w') as f:
-            f.write("Duplicate image pairs:\n")
-            for pair in duplicate_pairs:
-                f.write(f"These files are identical: {' '.join(pair)}\n")
-        print(Fore.GREEN + "Duplicate image pairs logged in duplicate_log.txt" + Style.RESET_ALL)
-    else:
-        print(Fore.YELLOW + "No duplicate image pairs found." + Style.RESET_ALL)
+    app.run(debug=True)
