@@ -9,6 +9,7 @@ import cairosvg
 import cv2
 from skimage.metrics import structural_similarity as ssim
 from colorama import init, Fore, Style
+import uuid  # UUID modülünü ekledik
 
 # Initialize colorama
 init()
@@ -86,34 +87,30 @@ def upload_files():
         return jsonify({"error": "No file part"}), 400
     
     files = request.files.getlist('file')
+    temp_folder = os.path.join(UPLOAD_FOLDER, str(uuid.uuid4()))  # Benzersiz geçici klasör oluştur
+
+    os.makedirs(temp_folder)  # Geçici klasörü oluştur
+
     for file in files:
         if file.filename == '':
             return jsonify({"error": "No selected file"}), 400
         
         if file and file.filename.endswith('.svg'):
-            file.save(os.path.join(UPLOAD_FOLDER, file.filename))
+            file.save(os.path.join(temp_folder, file.filename))
 
-    duplicate_pairs = find_duplicates(UPLOAD_FOLDER)
+    duplicate_pairs = find_duplicates(temp_folder)
     
     data = []
     for pair in duplicate_pairs:
         data.append({
             "fileName": pair[0],
-            "source": get_image_source(os.path.join(UPLOAD_FOLDER, pair[0])),
+            "source": get_image_source(os.path.join(temp_folder, pair[0])),
             "fileName2": pair[1],
-            "source2": get_image_source(os.path.join(UPLOAD_FOLDER, pair[1]))
+            "source2": get_image_source(os.path.join(temp_folder, pair[1]))
         })
     
-    # Klasör içeriğini temizle
-    for filename in os.listdir(UPLOAD_FOLDER):
-        file_path = os.path.join(UPLOAD_FOLDER, filename)
-        try:
-            if os.path.isfile(file_path):
-                os.unlink(file_path)
-            elif os.path.isdir(file_path):
-                shutil.rmtree(file_path)
-        except Exception as e:
-            print(f"Error while deleting {file_path}: {e}")
+    # Geçici klasörü temizle
+    shutil.rmtree(temp_folder)
 
     return jsonify({"data": data})
 
