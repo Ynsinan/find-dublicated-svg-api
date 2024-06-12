@@ -9,7 +9,8 @@ import cairosvg
 import cv2
 from skimage.metrics import structural_similarity as ssim
 from colorama import init, Fore, Style
-import uuid  # UUID modülünü ekledik
+import uuid
+import numpy as np
 
 # Initialize colorama
 init()
@@ -50,8 +51,21 @@ def compare_images(image_pair):
     gray1 = cv2.cvtColor(image1, cv2.COLOR_BGR2GRAY)
     gray2 = cv2.cvtColor(image2, cv2.COLOR_BGR2GRAY)
 
-    score, _ = ssim(gray1, gray2, full=True)
-    return score
+    # SSIM score
+    ssim_score, _ = ssim(gray1, gray2, full=True)
+    
+    # MSE score
+    mse_score = np.mean((gray1 - gray2) ** 2)
+    
+    # Histogram comparison
+    hist1 = cv2.calcHist([gray1], [0], None, [256], [0, 256])
+    hist2 = cv2.calcHist([gray2], [0], None, [256], [0, 256])
+    hist_score = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
+    
+    # Combining scores with thresholding
+    if ssim_score > 0.95 and mse_score < 100 and hist_score > 0.9:
+        return 1
+    return 0
 
 def find_duplicates(folder_path):
     duplicate_pairs = []
@@ -71,7 +85,7 @@ def find_duplicates(folder_path):
                 return None
 
             similarity_score = compare_images((temp1.name, temp2.name))
-            if similarity_score is not None and similarity_score == 1:
+            if similarity_score == 1:
                 return (img1_name, img2_name)
         return None
 
@@ -89,7 +103,6 @@ def find_duplicates(folder_path):
         message = "No duplicate images found."
 
     return duplicate_pairs, message
-
 
 def get_image_source(image_path):
     with open(image_path, "rb") as image_file:
