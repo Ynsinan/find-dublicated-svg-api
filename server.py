@@ -11,6 +11,7 @@ from skimage.metrics import structural_similarity as ssim
 from colorama import init, Fore, Style
 import uuid
 import numpy as np
+from flask_cors import cross_origin
 
 # Initialize colorama
 init()
@@ -115,6 +116,7 @@ def hello_world():
     return 'Hello, World!'
 
 @app.route('/upload', methods=['POST'])
+@cross_origin()
 def upload_files():
     if 'file' not in request.files:
         return jsonify({"isSuccess": False, "error": "No file part"}), 400
