@@ -109,6 +109,11 @@ def get_image_source(image_path):
         encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
     return f"data:image/svg+xml;base64,{encoded_string}"
 
+
+@app.route('/')
+def hello_world():
+    return 'Hello, World!'
+
 @app.route('/upload', methods=['POST'])
 def upload_files():
     if 'file' not in request.files:
