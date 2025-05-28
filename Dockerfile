@@ -9,7 +9,6 @@ RUN apt-get update && apt-get install -y \
     libcairo2 \
     libcairo2-dev \
     libgl1-mesa-dev \
-    libopencv-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # requirements.txt dosyasını Docker konteynerine kopyala
@@ -21,11 +20,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Uygulamanın geri kalan dosyalarını Docker konteynerine kopyala
 COPY . .
 
-# Gerekli klasörleri oluştur
-RUN mkdir -p uploaded_svgs jobs
-
-# Uygulamanın çalışacağı portu belirt
+# Uygulamanın çalışacağı portu belirt (Flask varsayılan olarak 5000 portunu kullanır)
 EXPOSE 5000
 
-# Railway için async server kullan - production ready
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--timeout", "300", "--worker-class", "gthread", "--threads", "4", "--worker-connections", "1000", "async_server:app"]
+# Uygulamayı çalıştır
+CMD ["python", "server.py"]
