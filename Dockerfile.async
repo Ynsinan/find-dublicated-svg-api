@@ -18,6 +18,9 @@ COPY requirements.txt .
 # Gerekli Python paketlerini yükle
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Gunicorn'u da yükle (production için)
+RUN pip install gunicorn
+
 # Uygulamanın geri kalan dosyalarını Docker konteynerine kopyala
 COPY . .
 
@@ -27,5 +30,5 @@ RUN mkdir -p uploaded_svgs jobs
 # Uygulamanın çalışacağı portu belirt
 EXPOSE 5000
 
-# Railway için async server kullan - production ready
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--timeout", "300", "--worker-class", "gthread", "--threads", "4", "--worker-connections", "1000", "async_server:app"]
+# Production için Gunicorn kullan
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--timeout", "300", "--worker-class", "gthread", "--threads", "4", "--worker-connections", "1000", "async_server:app"] 
